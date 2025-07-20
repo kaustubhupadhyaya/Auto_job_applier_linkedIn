@@ -19,7 +19,7 @@ version:    24.12.29.12.30
 # >>>>>>>>>>> Easy Apply Questions & Inputs <<<<<<<<<<<
 
 # Give an relative path of your default resume to be uploaded. If file in not found, will continue using your previously uploaded resume in LinkedIn.
-default_resume_path = "file:///C:/Users/kaust/Documents/Kaustubh_Upadhyaya_Data_Engineer.pdf"      # (In Development)
+default_resume_path = "C:/Users/kaust/Documents/Kaustubh_Upadhyaya_Data_Engineer.pdf"
 
 # What do you want to answer for questions that ask about years of experience you have, this is different from current_experience? 
 years_of_experience = "2"          # A number in quotes Eg: "0","1","2","3","4", etc.

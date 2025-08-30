@@ -1,0 +1,189 @@
+name: LinkedIn Auto Job Applier - 24x7 Hourly Run
+
+on:
+  # Run every hour, 24/7
+  schedule:
+    - cron: '0 * * * *'  # At minute 0 of every hour
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+# Set environment variables for the entire workflow
+env:
+  DISPLAY: ':99'  # Virtual display for headless Chrome
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  auto-apply-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55  # Timeout before next scheduled run
+    
+    steps:
+    # Checkout the repository
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    # Set up Python environment
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+        
+    # Install system dependencies for Chrome and virtual display
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          wget \
+          gnupg \
+          unzip \
+          xvfb \
+          x11-utils \
+          xfonts-100dpi \
+          xfonts-75dpi \
+          xfonts-scalable \
+          xfonts-cyrillic
+          
+        # Install Chrome
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        
+        # Verify Chrome installation
+        google-chrome --version
+        
+    # Install Python dependencies
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install undetected-chromedriver pyautogui setuptools openai flask-cors flask
+        pip install selenium webdriver-manager
+        
+    # Create necessary directories
+    - name: Create Required Directories
+      run: |
+        mkdir -p "all resumes/default"
+        mkdir -p "all excels"
+        mkdir -p "logs"
+        
+    # Set up configuration files (using secrets)
+    - name: Configure Bot Settings
+      run: |
+        # Create secrets.py with credentials from GitHub secrets
+        cat > config/secrets.py << EOF
+        '''
+        LinkedIn Auto Job Applier Secrets Configuration
+        This file contains sensitive information - DO NOT commit to version control
+        '''
+        
+        # LinkedIn credentials
+        username = "${{ secrets.LINKEDIN_USERNAME }}"
+        password = "${{ secrets.LINKEDIN_PASSWORD }}"
+        
+        # AI Configuration (optional)
+        use_AI = ${{ secrets.USE_AI || 'False' }}
+        ai_provider = "${{ secrets.AI_PROVIDER || 'OpenAI' }}"
+        openai_api_key = "${{ secrets.OPENAI_API_KEY || '' }}"
+        deepseek_api_key = "${{ secrets.DEEPSEEK_API_KEY || '' }}"
+        EOF
+        
+        # Update settings.py for headless operation
+        sed -i 's/run_in_background = False/run_in_background = True/' config/settings.py
+        sed -i 's/stealth_mode = False/stealth_mode = True/' config/settings.py
+        sed -i 's/keep_screen_awake = True/keep_screen_awake = False/' config/settings.py
+        sed -i 's/pause_before_submit = True/pause_before_submit = False/' config/settings.py
+        sed -i 's/pause_at_failed_question = True/pause_at_failed_question = False/' config/settings.py
+        
+    # Create a dummy default resume if none exists
+    - name: Setup Default Resume
+      run: |
+        if [ ! -f "all resumes/default/resume.pdf" ]; then
+          echo "Creating dummy resume file..."
+          # Create a simple text file as placeholder (you should replace this with your actual resume)
+          echo "Default Resume Placeholder - Replace with actual resume" > "all resumes/default/resume.txt"
+          echo "WARNING: No resume file found. Please add your resume to 'all resumes/default/resume.pdf'"
+        fi
+        
+    # Start virtual display for headless operation
+    - name: Start Virtual Display
+      run: |
+        # Start Xvfb virtual display
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 3
+        
+    # Run the LinkedIn auto job applier
+    - name: Run LinkedIn Auto Job Applier
+      id: run_bot
+      continue-on-error: true  # Continue even if the bot encounters errors
+      run: |
+        echo "Starting LinkedIn Auto Job Applier..."
+        echo "Current time: $(date)"
+        
+        # Set environment for headless operation
+        export DISPLAY=:99
+        export CHROME_BIN=/usr/bin/google-chrome
+        
+        # Run the bot with timeout and error handling
+        timeout 50m python runAiBot.py 2>&1 | tee bot_output.log || {
+          echo "Bot execution completed with exit code: $?"
+          echo "This is normal - the bot may exit after completing its cycle"
+        }
+        
+    # Upload logs and results as artifacts
+    - name: Upload Execution Logs
+      if: always()  # Always upload logs, even if the bot failed
+      uses: actions/upload-artifact@v4
+      with:
+        name: execution-logs-${{ github.run_number }}
+        path: |
+          logs/
+          all excels/
+          bot_output.log
+        retention-days: 7
+        
+    # Create a summary of the run
+    - name: Create Run Summary
+      if: always()
+      run: |
+        echo "## LinkedIn Auto Job Applier Run Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Run Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Run Number:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "bot_output.log" ]; then
+          echo "- **Status:** Execution completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Last 10 lines of output:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 10 bot_output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Status:** No output log generated" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check for applied jobs
+        if [ -f "all excels/all_applied_applications_history.csv" ]; then
+          TOTAL_APPLICATIONS=$(wc -l < "all excels/all_applied_applications_history.csv")
+          echo "- **Total Applications:** $TOTAL_APPLICATIONS" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    # Optional: Send notification (uncomment and configure if needed)
+    # - name: Send Notification
+    #   if: failure()
+    #   run: |
+    #     echo "Bot execution failed. You can set up email/Slack notifications here."
+    #     # Add your notification logic here (email, Slack, etc.)
+        
+    # Clean up processes
+    - name: Cleanup
+      if: always()
+      run: |
+        # Kill any remaining Chrome processes
+        pkill -f chrome || true
+        pkill -f Xvfb || true
+        
+        # Clean up temporary files (optional)
+        # rm -f bot_output.log
+        
+        echo "Cleanup completed"

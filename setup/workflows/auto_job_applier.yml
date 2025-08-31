@@ -1,177 +1,39 @@
-name: LinkedIn Auto Job Applier - Hourly Run
+# .github/workflows/run-bot.yml
+
+name: Run Python Bot Every 5 Minutes
 
 on:
-  # Run every 6 hours, 24/7
-  schedule:
-    - cron: '0 */6 * * *'  # At minute 0 of every 6th hour (00:00, 06:00, 12:00, 18:00)
-  
-  # Allow manual trigger
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+  
+  # Runs the job on a schedule
+  schedule:
+    # This is a cron job expression that runs at every 5th minute
+    - cron: '*/5 * * * *'
 
 jobs:
-  run-bot:
+  run-python-script:
+    # The type of runner that the job will run on
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # Timeout before next scheduled run (6 hours = 360 min, so 350 is safe)
-    
+
     steps:
-    # Checkout the repository
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-      
-    # Set up Python environment
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        cache: 'pip'
-        
-    # Install system dependencies for Chrome and virtual display
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq \
-          wget gnupg unzip xvfb x11-utils \
-          xfonts-100dpi xfonts-75dpi xfonts-scalable xfonts-cyrillic
+      # 1. Checks out your repository's code so your job can access it
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # 2. Sets up the Python version you want to use
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10' # You can change this to your desired version
+
+      # 3. (Optional but recommended) Installs dependencies from requirements.txt
+      #    Create a requirements.txt file in your repo root if you have dependencies.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           
-        # Install Chrome
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq google-chrome-stable
-        
-    # Install Python dependencies
-    - name: Install Python Dependencies
-      run: |
-        python -m pip install --upgrade pip -q
-        # Install from requirements.txt if it exists, otherwise install common packages
-        if [ -f requirements.txt ]; then
-          pip install -r requirements.txt -q
-        else
-          pip install -q undetected-chromedriver pyautogui setuptools openai flask-cors flask selenium webdriver-manager pandas numpy beautifulsoup4 lxml requests python-dotenv colorama google-generativeai
-        fi
-        
-    # Start virtual display for headless operation
-    - name: Start Virtual Display
-      run: |
-        export DISPLAY=:99
-        Xvfb :99 -screen 0 1920x1080x24 &
-        sleep 3
-        
-    # Send start notification
-    - name: Send Start Notification
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: "🤖 LinkedIn Bot Started - Run #${{ github.run_number }}"
-        to: ${{ secrets.NOTIFICATION_EMAIL }}
-        from: ${{ secrets.EMAIL_USERNAME }}
-        body: |
-          LinkedIn Auto Job Applier Bot Started
-          
-          ⏰ Time: ${{ github.event.schedule || 'Manual Trigger' }}
-          🔢 Run Number: ${{ github.run_number }}
-          🕐 Started At: $(date)
-          
-          The bot is now searching and applying to jobs automatically.
-          
-          You'll receive another email when the run completes.
-        
-    # Run the LinkedIn auto job applier
-    - name: Run LinkedIn Auto Job Applier
-      id: run_bot
-      continue-on-error: true
-      run: |
-        echo "🤖 Starting LinkedIn Auto Job Applier..."
-        echo "⏰ Current time: $(date)"
-        
-        # Set environment for headless operation
-        export DISPLAY=:99
-        export CHROME_BIN=/usr/bin/google-chrome
-        
-        # Create output file to capture results
-        echo "Starting bot execution..." > bot_output.log
-        echo "Time: $(date)" >> bot_output.log
-        echo "---" >> bot_output.log
-        
-        # Run the bot with timeout (5 hours 50 minutes max)
-        timeout 350m python runAiBot.py 2>&1 | tee -a bot_output.log || {
-          echo "Bot execution completed with exit code: $?" >> bot_output.log
-          echo "This is normal - the bot may exit after completing its cycle" >> bot_output.log
-        }
-        
-        echo "---" >> bot_output.log
-        echo "Completed at: $(date)" >> bot_output.log
-        
-    # Count applications made (if CSV exists)
-    - name: Count Applications
-      id: count_apps
-      run: |
-        if [ -f "all excels/all_applied_applications_history.csv" ]; then
-          # Count total applications (subtract 1 for header)
-          TOTAL_APPS=$(tail -n +2 "all excels/all_applied_applications_history.csv" | wc -l)
-          echo "total_applications=$TOTAL_APPS" >> $GITHUB_OUTPUT
-          
-          # Get today's applications (simple grep by today's date)
-          TODAY=$(date +"%Y-%m-%d")
-          TODAY_APPS=$(grep "$TODAY" "all excels/all_applied_applications_history.csv" | wc -l || echo "0")
-          echo "today_applications=$TODAY_APPS" >> $GITHUB_OUTPUT
-        else
-          echo "total_applications=0" >> $GITHUB_OUTPUT
-          echo "today_applications=0" >> $GITHUB_OUTPUT
-        fi
-        
-    # Upload logs as artifacts
-    - name: Upload Execution Logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: bot-logs-run-${{ github.run_number }}
-        path: |
-          logs/
-          all excels/
-          bot_output.log
-        retention-days: 7
-        
-    # Send completion notification
-    - name: Send Completion Notification
-      if: always()
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: "${{ steps.run_bot.outcome == 'success' && '✅' || '❌' }} LinkedIn Bot Completed - Run #${{ github.run_number }}"
-        to: ${{ secrets.NOTIFICATION_EMAIL }}
-        from: ${{ secrets.EMAIL_USERNAME }}
-        body: |
-          LinkedIn Auto Job Applier Bot Execution Complete
-          
-          📊 EXECUTION SUMMARY:
-          ⏰ Started: $(date -d '50 minutes ago' 2>/dev/null || date)
-          🏁 Completed: $(date)
-          🔢 Run Number: ${{ github.run_number }}
-          📈 Status: ${{ steps.run_bot.outcome == 'success' && 'SUCCESS' || 'COMPLETED WITH ISSUES' }}
-          
-          📋 APPLICATION STATS:
-          📝 Total Applications: ${{ steps.count_apps.outputs.total_applications }}
-          📅 Today's Applications: ${{ steps.count_apps.outputs.today_applications }}
-          
-          📄 RECENT OUTPUT:
-          $(tail -n 10 bot_output.log 2>/dev/null || echo "No output log available")
-          
-          🔗 View full logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          
-          Next run scheduled in 6 hours ⏰
-        
-    # Clean up processes
-    - name: Cleanup
-      if: always()
-      run: |
-        # Kill any remaining processes
-        pkill -f chrome || true
-        pkill -f Xvfb || true
-        echo "🧹 Cleanup completed"
+      # 4. Runs the Python script
+      - name: Execute Python script
+        run: python runAiBot.py
